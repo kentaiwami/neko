@@ -32,3 +32,17 @@ jobs:
               manifests/deployment.yaml | sudo kubectl apply -f - -n neko
           sudo kubectl apply -f manifests/service.yaml -n neko
           sudo kubectl rollout status deployment/neko -n neko --timeout=120s
+
+      - name: Notify Slack on success
+        if: success()
+        run: |
+          curl -s -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"✅ Deploy succeeded: `${{ github.ref_name }}` @ `${{ github.sha }}`"}'
+
+      - name: Notify Slack on failure
+        if: failure()
+        run: |
+          curl -s -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"❌ Deploy failed: `${{ github.ref_name }}` @ `${{ github.sha }}`"}'
