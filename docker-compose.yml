@@ -1,0 +1,32 @@
+services:
+  db:
+    image: mariadb:11
+    command: --default-time-zone='+09:00'
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: nekodb
+      MARIADB_USER: neko
+      MARIADB_PASSWORD: neko
+      TZ: Asia/Tokyo
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "8082:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

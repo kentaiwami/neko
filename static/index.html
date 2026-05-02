@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>猫の体重管理</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { margin-bottom: 0.5rem; }
+    .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .tab { padding: 0.4rem 1rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; background: #f5f5f5; }
+    .tab.active { background: #333; color: #fff; border-color: #333; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+    .chart-wrap { position: relative; height: 260px; margin-bottom: 1rem; }
+    form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+    input { padding: 0.3rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 0.3rem 0.8rem; border: none; border-radius: 4px; cursor: pointer; background: #333; color: #fff; }
+    button.danger { background: #c00; }
+    button.secondary { background: #888; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #eee; }
+    .add-cat { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .edit-row input { width: 80px; }
+  </style>
+</head>
+<body>
+  <h1>🐱 猫の体重管理</h1>
+
+  <div class="add-cat">
+    <input id="newCatName" placeholder="猫の名前" />
+    <button onclick="addCat()">追加</button>
+  </div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="content"></div>
+
+  <script>
+    let cats = [];
+    let currentCatId = null;
+    let chart = null;
+
+    async function api(method, path, body) {
+      const res = await fetch(path, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      if (res.status === 204) return null;
+      return res.json();
+    }
+
+    async function loadCats() {
+      cats = await api('GET', '/api/cats') ?? [];
+      renderTabs();
+      if (cats.length > 0) {
+        if (!currentCatId || !cats.find(c => c.id === currentCatId)) {
+          currentCatId = cats[0].id;
+        }
+        loadWeights(currentCatId);
+      } else {
+        document.getElementById('content').innerHTML = '<p>猫を追加してください。</p>';
+      }
+    }
+
+    function renderTabs() {
+      const tabs = document.getElementById('tabs');
+      tabs.innerHTML = cats.map(c =>
+        `<div class="tab ${c.id === currentCatId ? 'active' : ''}" onclick="selectCat(${c.id})">${c.name}</div>`
+      ).join('');
+    }
+
+    function selectCat(id) {
+      currentCatId = id;
+      renderTabs();
+      loadWeights(id);
+    }
+
+    async function addCat() {
+      const input = document.getElementById('newCatName');
+      const name = input.value.trim();
+      if (!name) return;
+      await api('POST', '/api/cats', { name });
+      input.value = '';
+      loadCats();
+    }
+
+    async function loadWeights(catId) {
+      const weights = await api('GET', `/api/cats/${catId}/weights`) ?? [];
+      renderContent(catId, weights);
+    }
+
+    function renderContent(catId, weights) {
+      const cat = cats.find(c => c.id === catId);
+      const content = document.getElementById('content');
+      content.innerHTML = `
+        <div class="card">
+          <h2>${cat.name}</h2>
+          <div class="chart-wrap"><canvas id="weightChart"></canvas></div>
+          <form onsubmit="addWeight(event, ${catId})">
+            <input type="date" id="recDate" value="${today()}" required />
+            <input type="number" id="recWeight" placeholder="体重 (kg)" step="0.001" min="0.1" max="30" required />
+            <button type="submit">記録</button>
+          </form>
+          <table>
+            <thead><tr><th>日付</th><th>体重 (kg)</th><th></th></tr></thead>
+            <tbody id="weightRows"></tbody>
+          </table>
+        </div>`;
+
+      renderChart(weights);
+      renderRows(weights);
+    }
+
+    function renderChart(weights) {
+      if (chart) chart.destroy();
+      chart = new Chart(document.getElementById('weightChart'), {
+        type: 'line',
+        data: {
+          datasets: [{
+            label: '体重 (kg)',
+            data: weights.map(w => ({ x: new Date(w.recorded_on), y: w.weight_kg })),
+            borderColor: 'rgb(75,192,192)',
+            tension: 0.2,
+            pointRadius: 4,
+            fill: false,
+          }],
+        },
+        options: {
+          maintainAspectRatio: false,
+          scales: {
+            x: {
+              type: 'time',
+              time: { unit: 'day', tooltipFormat: 'yyyy/MM/dd', displayFormats: { day: 'MM/dd' } },
+              ticks: { maxTicksLimit: 10 },
+            },
+            y: { title: { display: true, text: 'kg' } },
+          },
+        },
+      });
+    }
+
+    function renderRows(weights) {
+      const tbody = document.getElementById('weightRows');
+      tbody.innerHTML = [...weights].reverse().map(w => `
+        <tr id="row-${w.id}">
+          <td>${w.recorded_on}</td>
+          <td>${w.weight_kg}</td>
+          <td>
+            <button class="secondary" onclick="startEdit(${w.id}, '${w.recorded_on}', ${w.weight_kg})">編集</button>
+            <button class="danger" onclick="deleteWeight(${w.id})">削除</button>
+          </td>
+        </tr>`).join('');
+    }
+
+    function startEdit(id, date, kg) {
+      const row = document.getElementById(`row-${id}`);
+      row.innerHTML = `
+        <td><input class="edit-row" type="date" id="ed-date-${id}" value="${date}" /></td>
+        <td><input class="edit-row" type="number" id="ed-kg-${id}" value="${kg}" step="0.001" min="0.1" max="30" style="width:80px" /></td>
+        <td>
+          <button type="button" onclick="saveEdit(${id})">保存</button>
+          <button type="button" class="secondary" onclick="loadWeights(${currentCatId})">キャンセル</button>
+        </td>`;
+    }
+
+    async function saveEdit(id) {
+      const date = document.getElementById(`ed-date-${id}`).value;
+      const kg = parseFloat(document.getElementById(`ed-kg-${id}`).value);
+      if (!date || isNaN(kg)) return;
+      try {
+        await api('PUT', `/api/weights/${id}`, { recorded_on: date, weight_kg: kg });
+      } catch(e) {
+        alert('保存に失敗しました: ' + e.message);
+        return;
+      }
+      loadWeights(currentCatId);
+    }
+
+    async function addWeight(e, catId) {
+      e.preventDefault();
+      const date = document.getElementById('recDate').value;
+      const kg = parseFloat(document.getElementById('recWeight').value);
+      await api('POST', `/api/cats/${catId}/weights`, { recorded_on: date, weight_kg: kg });
+      loadWeights(catId);
+    }
+
+    async function deleteWeight(id) {
+      if (!confirm('削除しますか？')) return;
+      await api('DELETE', `/api/weights/${id}`);
+      loadWeights(currentCatId);
+    }
+
+    function today() {
+      return new Date().toLocaleDateString('sv-SE');
+    }
+
+    loadCats();
+  </script>
+</body>
+</html>
