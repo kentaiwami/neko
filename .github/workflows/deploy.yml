@@ -1,0 +1,34 @@
+name: Deploy to k3s
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t ${REGISTRY_HOST}:5000/neko:${IMAGE_TAG} .
+          docker tag ${REGISTRY_HOST}:5000/neko:${IMAGE_TAG} ${REGISTRY_HOST}:5000/neko:latest
+          docker push ${REGISTRY_HOST}:5000/neko:${IMAGE_TAG}
+          docker push ${REGISTRY_HOST}:5000/neko:latest
+
+      - name: Deploy to k3s
+        env:
+          REGISTRY_HOST: ${{ secrets.REGISTRY_HOST }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          sudo kubectl create namespace neko --dry-run=client -o yaml | sudo kubectl apply -f -
+          sed -e "s|__REGISTRY_HOST__|${REGISTRY_HOST}|g" \
+              -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+              manifests/deployment.yaml | sudo kubectl apply -f - -n neko
+          sudo kubectl apply -f manifests/service.yaml -n neko
+          sudo kubectl rollout status deployment/neko -n neko --timeout=120s
