@@ -190,7 +190,14 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if err := db.Ping(); err != nil {
+			http.Error(w, "db unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 	mux.Handle("/api/cats", basicAuth(http.HandlerFunc(catsHandler)))
 	mux.Handle("/api/weights/", basicAuth(http.HandlerFunc(weightHandler)))
 	mux.Handle("/api/cats/", basicAuth(http.HandlerFunc(catWeightsHandler)))
